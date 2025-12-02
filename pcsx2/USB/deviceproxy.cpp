@@ -85,6 +85,7 @@ void RegisterDevice::Register()
 	inst.Add(DEVTYPE_GAMETRAK, new usb_pad::GametrakDevice());
 	inst.Add(DEVTYPE_REALPLAY, new usb_pad::RealPlayDevice());
 	inst.Add(DEVTYPE_TRAIN, new usb_pad::TrainDevice());
+	inst.Add(DEVTYPE_FLIGHTSTICK, new usb_pad::FlightStickDevice());
 }
 
 void RegisterDevice::Unregister()

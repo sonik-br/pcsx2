@@ -51,6 +51,18 @@ namespace usb_pad
 		CID_BUTTON29,
 		CID_BUTTON30,
 		CID_BUTTON31,
+		CID_STICK_L,
+		CID_STICK_R,
+		CID_STICK_U,
+		CID_STICK_D,
+		CID_STICK_THROTTLE_U,
+		CID_STICK_THROTTLE_D,
+		CID_STICK_RUDDER_L,
+		CID_STICK_RUDDER_R,
+		CID_STICK_HAT_U,
+		CID_STICK_HAT_D,
+		CID_STICK_HAT_L,
+		CID_STICK_HAT_R,
 		CID_COUNT,
 	};
 
@@ -63,6 +75,9 @@ namespace usb_pad
 		WT_ROCKBAND1_DRUMKIT,
 		WT_SEGA_SEAMIC,
 		WT_KEYBOARDMANIA_CONTROLLER,
+		WT_FLIGHTSTICK_FS1, // HP2-13  (FlightStick)
+		WT_FLIGHTSTICK_FS2, // HP2-217 (FlightStick 2)
+		WT_FLIGHTSTICK_FLIGHTFORCE, // FlightForce
 		WT_COUNT,
 	};
 
@@ -117,6 +132,19 @@ namespace usb_pad
 		const char* IconName() const;
 		std::span<const char*> SubTypes() const;
 		std::span<const InputBindingInfo> Bindings(u32 subtype) const;
+		std::span<const SettingInfo> Settings(u32 subtype) const;
+		USBDevice* CreateDevice(SettingsInterface& si, u32 port, u32 subtype) const;
+	};
+
+	class FlightStickDevice final : public PadDevice
+	{
+	public:
+		const char* Name() const;
+		const char* TypeName() const;
+		const char* IconName() const;
+		std::span<const char*> SubTypes() const;
+		std::span<const InputBindingInfo> Bindings(u32 subtype) const;
+		void UpdateSettings(USBDevice* dev, SettingsInterface& si) const;
 		std::span<const SettingInfo> Settings(u32 subtype) const;
 		USBDevice* CreateDevice(SettingsInterface& si, u32 port, u32 subtype) const;
 	};
@@ -311,6 +339,12 @@ namespace usb_pad
 
 		void UpdateSteering();
 		void UpdateHatSwitch();
+		void UpdateStickX();
+		void UpdateStickY();
+		void UpdateStickThrottle();
+		void UpdateStickRudder();
+		void UpdateStickHatX();
+		void UpdateStickHatY();
 
 		bool HasFF() const;
 		void OpenFFDevice();
@@ -330,6 +364,10 @@ namespace usb_pad
 		s32 steering_deadzone = 0;
 		s16 steering_curve_exponent = 0;
 
+		//flightstick
+		const s8 stick_range = 0xFF >> 1;
+		u8 mode = 3;
+
 		struct
 		{
 			// intermediate state, resolved at query time
@@ -347,6 +385,27 @@ namespace usb_pad
 
 			u8 throttle; // inverted, 0 = fully depressed
 			u8 brake; // inverted, 0 = fully depressed
+
+			// intermediate state, resolved at query time
+			u8 stick_left;
+			u8 stick_right;
+			u8 stick_up;
+			u8 stick_down;
+			u8 stick_throttle_up;
+			u8 stick_throttle_down;
+			u8 stick_rudder_left;
+			u8 stick_rudder_right;
+			u8 stick_hat_left;
+			u8 stick_hat_right;
+			u8 stick_hat_up;
+			u8 stick_hat_down;
+
+			u8 stick_x;
+			u8 stick_y;
+			u8 stick_throttle;
+			u8 stick_rudder;
+			u8 stick_hat_x;
+			u8 stick_hat_y;
 		} data = {};
 
 		std::string mFFdevName;
@@ -1235,5 +1294,204 @@ namespace usb_pad
 		0x95, 0x02, //   REPORT_COUNT (2)
 		0x81, 0x01, //   INPUT (Constant,Array,Absolute)
 		0xc0        // END_COLLECTION
+	};
+
+
+	/////////////////////
+	// FlightStick 1/2 //
+	/////////////////////
+#define DEFINE_USB_FLIGHTSTICK12_DEV_DESCRIPTOR(prefix, bcdUSB, bcdDevice) \
+	static const uint8_t prefix##_dev_descriptor[] = { \
+		/* bLength             */ USB_DEVICE_DESC_SIZE, \
+		/* bDescriptorType     */ USB_DEVICE_DESCRIPTOR_TYPE, \
+		/* bcdUSB              */ WBVAL(bcdUSB), /* FS1=0x0100, FS2=0x0110 */ \
+		/* bDeviceClass        */ 0xFF, \
+		/* bDeviceSubClass     */ 0x01, \
+		/* bDeviceProtocol     */ 0xFF, \
+		/* bMaxPacketSize0     */ 0x08, \
+		/* idVendor            */ WBVAL(0x06D3), \
+		/* idProduct           */ WBVAL(0x0F10), \
+		/* bcdDevice           */ WBVAL(bcdDevice), /* FS1=0x0001, FS2=0x0002 */ \
+		/* iManufacturer       */ 0x00, \
+		/* iProduct            */ 0x00, \
+		/* iSerialNumber       */ 0x00, \
+		/* bNumConfigurations  */ 0x01, \
+	}
+
+	// common for fs1 and fs2 models
+	static const uint8_t flightstick_config_descriptor[] = {
+		USB_CONFIGURATION_DESC_SIZE, // bLength
+		USB_CONFIGURATION_DESCRIPTOR_TYPE, // bDescriptorType
+		WBVAL(34), // wTotalLength
+		0x01, // bNumInterfaces
+		0x01, // bConfigurationValue
+		0x00, // iConfiguration (String Index)
+		0xA0, // bmAttributes
+		0x32, // bMaxPower 100mA
+
+		USB_INTERFACE_DESC_SIZE, // bLength
+		USB_INTERFACE_DESCRIPTOR_TYPE, // bDescriptorType
+		0x00, // bInterfaceNumber
+		0x00, // bAlternateSetting
+		0x01, // bNumEndpoints
+		0xFF, // bInterfaceClass
+		0x01, // bInterfaceSubClass
+		0x02, // bInterfaceProtocol
+		0x00, // iInterface (String Index)
+
+		// Unknown (looks to be HID. descriptor is missing)
+		0x09, // bLength
+		0x21, // bDescriptorType (HID)
+		0x00, 0x01, // bcdHID 1.00
+		0x00, // bCountryCode
+		0x01, // bNumDescriptors
+		0x22, // bDescriptorType[0] (HID)
+		0x40, 0x00, // wDescriptorLength[0] 64
+
+		USB_ENDPOINT_DESC_SIZE, // bLength
+		USB_ENDPOINT_DESCRIPTOR_TYPE, // bDescriptorType
+		USB_ENDPOINT_IN(1), // bEndpointAddress (IN/D2H)
+		USB_ENDPOINT_TYPE_INTERRUPT, // bmAttributes (Interrupt)
+		WBVAL(8), // wMaxPacketSize
+		0x0A, // bInterval 10 (unit depends on device speed)
+	};
+
+	static const USBDescStrings flightstick_desc_strings = {""};
+
+	// FlightStick "Type 1" / fst01_dev_descriptor
+	DEFINE_USB_FLIGHTSTICK12_DEV_DESCRIPTOR(fst01, 0x0100, 0x0001);
+
+	// FlightStick "Type 2" / fst02_dev_descriptor
+	DEFINE_USB_FLIGHTSTICK12_DEV_DESCRIPTOR(fst02, 0x0110, 0x0002);
+
+#undef DEFINE_USB_FLIGHTSTICK12_DEV_DESCRIPTOR
+
+
+	/////////////////
+	// FlightForce //
+	/////////////////
+	static const uint8_t flightforce_dev_descriptor[] = {
+		0x12, // bLength
+		0x01, // bDescriptorType (Device)
+		WBVAL(0x0100), // bcdUSB 1.00
+		0x00, // bDeviceClass (Use class information in the Interface Descriptors)
+		0x00, // bDeviceSubClass
+		0x00, // bDeviceProtocol
+		0x08, // bMaxPacketSize0 8
+		WBVAL(0x046d), // idVendor 0x046D
+		WBVAL(0xc283), // idProduct 0xC283
+		WBVAL(0x0106), // bcdDevice 0x0106
+		0x01, // iManufacturer (String Index)
+		0x02, // iProduct (String Index)
+		0x00, // iSerialNumber (String Index)
+		0x01, // bNumConfigurations 1
+	};
+
+	static const uint8_t flightforce_config_descriptor[] = {
+		USB_CONFIGURATION_DESC_SIZE, // bLength
+		USB_CONFIGURATION_DESCRIPTOR_TYPE, // bDescriptorType (Configuration)
+		WBVAL(41), // wTotalLength 41
+		0x01, // bNumInterfaces 1
+		0x01, // bConfigurationValue
+		0x00, // iConfiguration (String Index)
+		0x80, // bmAttributes
+		USB_CONFIG_POWER_MA(80), // bMaxPower 80mA
+
+		USB_INTERFACE_DESC_SIZE, // bLength
+		USB_INTERFACE_DESCRIPTOR_TYPE, // bDescriptorType (Interface)
+		0x00, // bInterfaceNumber 0
+		0x00, // bAlternateSetting
+		0x02, // bNumEndpoints 2
+		USB_CLASS_HID, // bInterfaceClass
+		0x00, // bInterfaceSubClass
+		0x00, // bInterfaceProtocol
+		0x00, // iInterface (String Index)
+
+		0x09, // bLength
+		USB_DT_HID, // bDescriptorType (HID)
+		DESC_CONFIG_WORD(0x0100), // bcdHID 1.00
+		0x21, // bCountryCode
+		0x01, // bNumDescriptors
+		USB_DT_REPORT, // bDescriptorType[0] (HID)
+		DESC_CONFIG_WORD(130), // wDescriptorLength[0] 130
+
+		USB_ENDPOINT_DESC_SIZE, // bLength
+		USB_ENDPOINT_DESCRIPTOR_TYPE, // bDescriptorType (Endpoint)
+		USB_ENDPOINT_IN(1), // bEndpointAddress (IN/D2H)
+		USB_ENDPOINT_TYPE_INTERRUPT, // bmAttributes (Interrupt)
+		DESC_CONFIG_WORD(USB_PSIZE), // wMaxPacketSize 8
+		0x0A, // bInterval 10 (unit depends on device speed)
+
+		USB_ENDPOINT_DESC_SIZE, // bLength
+		USB_ENDPOINT_DESCRIPTOR_TYPE, // bDescriptorType (Endpoint)
+		USB_ENDPOINT_OUT(1), // bEndpointAddress (OUT/D2D)
+		USB_ENDPOINT_TYPE_INTERRUPT, // bmAttributes (Interrupt)
+		DESC_CONFIG_WORD(USB_PSIZE), // wMaxPacketSize 8
+		0x0A, // bInterval 10 (unit depends on device speed)
+	};
+
+	static const uint8_t flightforce_hid_report_descriptor[] = {
+		0x05, 0x01, // Usage Page (Generic Desktop Ctrls)
+		0x09, 0x04, // Usage (Joystick)
+		0xA1, 0x01, // Collection (Application)
+		0xA1, 0x02, //   Collection (Logical)
+		0x09, 0x01, //     Usage (Pointer)
+		0xA1, 0x00, //     Collection (Physical)
+		0x75, 0x08, //       Report Size (8)
+		0x95, 0x02, //       Report Count (2)
+		0x15, 0x00, //       Logical Minimum (0)
+		0x26, 0xFF, 0x00, //       Logical Maximum (255)
+		0x35, 0x00, //       Physical Minimum (0)
+		0x46, 0xFF, 0x00, //       Physical Maximum (255)
+		0x09, 0x30, //       Usage (X)
+		0x09, 0x31, //       Usage (Y)
+		0x81, 0x02, //       Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+		0x06, 0x00, 0xFF, //       Usage Page (Vendor Defined 0xFF00)
+		0x09, 0x01, //       Usage (0x01)
+		0x75, 0x04, //       Report Size (4)
+		0x95, 0x01, //       Report Count (1)
+		0x25, 0x0F, //       Logical Maximum (15)
+		0x81, 0x02, //       Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+		0x05, 0x01, //       Usage Page (Generic Desktop Ctrls)
+		0x25, 0x07, //       Logical Maximum (7)
+		0x46, 0x3B, 0x01, //       Physical Maximum (315)
+		0x65, 0x14, //       Unit (System: English Rotation, Length: Centimeter)
+		0x09, 0x39, //       Usage (Hat switch)
+		0x81, 0x42, //       Input (Data,Var,Abs,No Wrap,Linear,Preferred State,Null State)
+		0x75, 0x08, //       Report Size (8)
+		0x26, 0xFF, 0x00, //       Logical Maximum (255)
+		0x46, 0xFF, 0x00, //       Physical Maximum (255)
+		0x09, 0x35, //       Usage (Rz)
+		0x81, 0x02, //       Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+		0xC0, //     End Collection
+		0x65, 0x00, //     Unit (None)
+		0x75, 0x01, //     Report Size (1)
+		0x95, 0x07, //     Report Count (7)
+		0x25, 0x01, //     Logical Maximum (1)
+		0x45, 0x01, //     Physical Maximum (1)
+		0x05, 0x09, //     Usage Page (Button)
+		0x19, 0x01, //     Usage Minimum (0x01)
+		0x29, 0x07, //     Usage Maximum (0x07)
+		0x81, 0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+		0x95, 0x01, //     Report Count (1)
+		0x81, 0x01, //     Input (Const,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
+		0x05, 0x01, //     Usage Page (Generic Desktop Ctrls)
+		0x75, 0x08, //     Report Size (8)
+		0x26, 0xFF, 0x00, //     Logical Maximum (255)
+		0x46, 0xFF, 0x00, //     Physical Maximum (255)
+		0x09, 0x36, //     Usage (Slider)
+		0x81, 0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+		0x06, 0x00, 0xFF, //     Usage Page (Vendor Defined 0xFF00)
+		0x09, 0x01, //     Usage (0x01)
+		0x95, 0x01, //     Report Count (1)
+		0x81, 0x02, //     Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
+		0xC0, //   End Collection
+		0xA1, 0x02, //   Collection (Logical)
+		0x06, 0x00, 0xFF, //     Usage Page (Vendor Defined 0xFF00)
+		0x09, 0x02, //     Usage (0x02)
+		0x95, 0x08, //     Report Count (8)
+		0x91, 0x02, //     Output (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position,Non-volatile)
+		0xC0, //   End Collection
+		0xC0, // End Collection
 	};
 } // namespace usb_pad

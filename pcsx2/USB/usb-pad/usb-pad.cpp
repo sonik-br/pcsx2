@@ -45,6 +45,12 @@ namespace usb_pad
 		"",
 		"KONAMI"};
 
+	static const USBDescStrings flightforce_desc_strings = {
+		"",
+		"Logitech Inc.", //actual index @ 0x04
+		"WingMan Force 3D" //actual index @ 0x20
+	};
+
 	static int MapSteeringCurveExponentOptionToExponent(const std::string& option)
 	{
 		int exponent = 0;
@@ -199,6 +205,14 @@ namespace usb_pad
 		// throttle/brake start unpressed
 		data.throttle = 255;
 		data.brake = 255;
+
+		//flight stick
+		data.stick_x = 0x80;
+		data.stick_y = 0x80;
+		data.stick_throttle = 0x80;
+		data.stick_rudder = 0x80;
+		data.stick_hat_x = 0x80;
+		data.stick_hat_y = 0x80;
 
 		Reset();
 	}
@@ -370,6 +384,47 @@ namespace usb_pad
 				return len;
 			}
 
+			case WT_FLIGHTSTICK_FS1:
+			case WT_FLIGHTSTICK_FS2:
+			{
+				UpdateStickX();
+				UpdateStickY();
+				UpdateStickThrottle();
+				UpdateStickRudder();
+				UpdateStickHatX();
+				UpdateStickHatY();
+
+				buf[0] = data.stick_x;
+				buf[1] = data.stick_y;
+				buf[2] = data.stick_rudder;
+				buf[3] = data.stick_throttle;
+				buf[4] = data.stick_hat_x;
+				buf[5] = data.stick_hat_y;
+				buf[6] = data.brake; // Triangle (A)
+				buf[7] = data.throttle; // Square (B)
+
+				return len;
+			}
+
+			case WT_FLIGHTSTICK_FLIGHTFORCE:
+			{
+				UpdateHatSwitch();
+				UpdateStickX();
+				UpdateStickY();
+				UpdateStickThrottle();
+				UpdateStickRudder();
+
+				buf[0] = data.stick_x;
+				buf[1] = data.stick_y;
+				buf[2] = static_cast<u8>(data.hatswitch << 4);
+				buf[3] = data.stick_rudder;
+				buf[4] = static_cast<u8>(data.buttons);
+				buf[5] = static_cast<u8>(~data.stick_throttle);
+				buf[6] = 0x03;
+
+				return len;
+			}
+
 			default:
 			{
 				return len;
@@ -450,6 +505,42 @@ namespace usb_pad
 				return ((data.buttons & mask) != 0u) ? 1.0f : 0.0f;
 			}
 
+			case CID_STICK_L:
+				return static_cast<float>(data.stick_left) / static_cast<float>(stick_range);
+
+			case CID_STICK_R:
+				return static_cast<float>(data.stick_right) / static_cast<float>(stick_range);
+
+			case CID_STICK_U:
+				return static_cast<float>(data.stick_up) / static_cast<float>(stick_range);
+
+			case CID_STICK_D:
+				return static_cast<float>(data.stick_down) / static_cast<float>(stick_range);
+
+			case CID_STICK_THROTTLE_U:
+				return static_cast<float>(data.stick_throttle_up) / static_cast<float>(stick_range);
+
+			case CID_STICK_THROTTLE_D:
+				return static_cast<float>(data.stick_throttle_down) / static_cast<float>(stick_range);
+
+			case CID_STICK_RUDDER_L:
+				return static_cast<float>(data.stick_rudder_left) / static_cast<float>(stick_range);
+
+			case CID_STICK_RUDDER_R:
+				return static_cast<float>(data.stick_rudder_left) / static_cast<float>(stick_range);
+
+			case CID_STICK_HAT_L:
+				return static_cast<float>(data.stick_hat_left) / static_cast<float>(stick_range);
+
+			case CID_STICK_HAT_R:
+				return static_cast<float>(data.stick_hat_right) / static_cast<float>(stick_range);
+
+			case CID_STICK_HAT_U:
+				return static_cast<float>(data.stick_hat_up) / static_cast<float>(stick_range);
+
+			case CID_STICK_HAT_D:
+				return static_cast<float>(data.stick_hat_down) / static_cast<float>(stick_range);
+
 			default:
 				return 0.0f;
 		}
@@ -460,7 +551,7 @@ namespace usb_pad
 		const s16 raw_steering = static_cast<s16>(std::lroundf(value * static_cast<float>(steering_range)));
 		const s16 deadzone_offset = static_cast<s16>(std::lroundf(value * static_cast<float>(steering_deadzone)));
 		const s16 deadzone_modified_steering = std::max((raw_steering - steering_deadzone + deadzone_offset), 0);
-		
+
 		if (steering_curve_exponent)
 		{
 			return std::pow(deadzone_modified_steering, steering_curve_exponent + 1) / std::pow(steering_range, steering_curve_exponent);
@@ -551,6 +642,66 @@ namespace usb_pad
 			}
 			break;
 
+			case CID_STICK_L:
+				data.stick_left = static_cast<u8>(std::clamp<long>(std::lroundf(value * 255.0f), 0, 255));
+				UpdateStickX();
+				break;
+
+			case CID_STICK_R:
+				data.stick_right = static_cast<u8>(std::clamp<long>(std::lroundf(value * 255.0f), 0, 255));
+				UpdateStickX();
+				break;
+
+			case CID_STICK_U:
+				data.stick_up = static_cast<u8>(std::clamp<long>(std::lroundf(value * 255.0f), 0, 255));
+				UpdateStickY();
+				break;
+
+			case CID_STICK_D:
+				data.stick_down = static_cast<u8>(std::clamp<long>(std::lroundf(value * 255.0f), 0, 255));
+				UpdateStickY();
+				break;
+
+			case CID_STICK_THROTTLE_U:
+				data.stick_throttle_up = static_cast<u8>(std::clamp<long>(std::lroundf(value * 255.0f), 0, 255));
+				UpdateStickThrottle();
+				break;
+
+			case CID_STICK_THROTTLE_D:
+				data.stick_throttle_down = static_cast<u8>(std::clamp<long>(std::lroundf(value * 255.0f), 0, 255));
+				UpdateStickThrottle();
+				break;
+
+			case CID_STICK_RUDDER_L:
+				data.stick_rudder_left = static_cast<u8>(std::clamp<long>(std::lroundf(value * 255.0f), 0, 255));
+				UpdateStickRudder();
+				break;
+
+			case CID_STICK_RUDDER_R:
+				data.stick_rudder_right = static_cast<u8>(std::clamp<long>(std::lroundf(value * 255.0f), 0, 255));
+				UpdateStickRudder();
+				break;
+
+			case CID_STICK_HAT_L:
+				data.stick_hat_left = static_cast<u8>(std::clamp<long>(std::lroundf(value * 255.0f), 0, 255));
+				UpdateStickHatX();
+				break;
+
+			case CID_STICK_HAT_R:
+				data.stick_hat_right = static_cast<u8>(std::clamp<long>(std::lroundf(value * 255.0f), 0, 255));
+				UpdateStickHatX();
+				break;
+
+			case CID_STICK_HAT_U:
+				data.stick_hat_up = static_cast<u8>(std::clamp<long>(std::lroundf(value * 255.0f), 0, 255));
+				UpdateStickHatY();
+				break;
+
+			case CID_STICK_HAT_D:
+				data.stick_hat_down = static_cast<u8>(std::clamp<long>(std::lroundf(value * 255.0f), 0, 255));
+				UpdateStickHatY();
+				break;
+
 			default:
 				break;
 		}
@@ -594,10 +745,70 @@ namespace usb_pad
 			data.hatswitch = 8;
 	}
 
+	void PadState::UpdateStickX()
+	{
+		if (data.stick_left > 0)
+			data.stick_x = static_cast<u8>(std::max<int>(stick_range - data.stick_left, 0));
+		else if (data.stick_right > 0)
+			data.stick_x = static_cast<u8>(std::min<int>(stick_range + data.stick_right, stick_range * 2));
+		else
+			data.stick_x = 0x80;
+	}
+
+	void PadState::UpdateStickY()
+	{
+		if (data.stick_up > 0)
+			data.stick_y = static_cast<u8>(std::max<int>(stick_range - data.stick_up, 0));
+		else if (data.stick_down > 0)
+			data.stick_y = static_cast<u8>(std::min<int>(stick_range + data.stick_down, stick_range * 2));
+		else
+			data.stick_y = 0x80;
+	}
+
+	void PadState::UpdateStickThrottle()
+	{
+		if (data.stick_throttle_up > 0)
+			data.stick_throttle = static_cast<u8>(std::min<int>(stick_range + data.stick_throttle_up, stick_range * 2));
+		else if (data.stick_throttle_down > 0)
+			data.stick_throttle = static_cast<u8>(std::max<int>(stick_range - data.stick_throttle_down, 0));
+		else
+			data.stick_throttle = 0x80;
+	}
+
+	void PadState::UpdateStickRudder()
+	{
+		if (data.stick_rudder_left > 0)
+			data.stick_rudder = static_cast<u8>(std::max<int>(stick_range - data.stick_rudder_left, 0));
+		else if (data.stick_rudder_right > 0)
+			data.stick_rudder = static_cast<u8>(std::min<int>(stick_range + data.stick_rudder_right, stick_range * 2));
+		else
+			data.stick_rudder = 0x80;
+	}
+
+	void PadState::UpdateStickHatX()
+	{
+		if (data.stick_hat_left > 0)
+			data.stick_hat_x = static_cast<u8>(std::max<int>(stick_range - data.stick_hat_left, 0));
+		else if (data.stick_hat_right > 0)
+			data.stick_hat_x = static_cast<u8>(std::min<int>(stick_range + data.stick_hat_right, stick_range * 2));
+		else
+			data.stick_hat_x = 0x80;
+	}
+
+	void PadState::UpdateStickHatY()
+	{
+		if (data.stick_hat_up > 0)
+			data.stick_hat_y = static_cast<u8>(std::max<int>(stick_range - data.stick_hat_up, 0));
+		else if (data.stick_hat_down > 0)
+			data.stick_hat_y = static_cast<u8>(std::min<int>(stick_range + data.stick_hat_down, stick_range * 2));
+		else
+			data.stick_hat_y = 0x80;
+	}
+
 	bool PadState::HasFF() const
 	{
-		// only do force feedback for wheels...
-		return (type <= WT_GT_FORCE);
+		// only do force feedback for wheels and flightforce...
+		return (type <= WT_GT_FORCE || type == WT_FLIGHTSTICK_FLIGHTFORCE);
 	}
 
 	void PadState::OpenFFDevice()
@@ -683,6 +894,17 @@ namespace usb_pad
 							ret = sizeof(kbm_hid_report_descriptor);
 							memcpy(data, kbm_hid_report_descriptor, ret);
 						}
+						//else if (s->type == WT_FLIGHTSTICK_FS1) //missing?
+						//{
+						//}
+						//else if (s->type == WT_FLIGHTSTICK_FS2) //missing?
+						//{
+						//}
+						else if (s->type == WT_FLIGHTSTICK_FLIGHTFORCE)
+						{
+							ret = sizeof(flightforce_hid_report_descriptor);
+							memcpy(data, flightforce_hid_report_descriptor, ret);
+						}
 						else if (s->type == WT_GENERIC)
 						{
 							ret = sizeof(pad_driving_force_hid_separate_report_descriptor);
@@ -711,6 +933,65 @@ namespace usb_pad
 				break;
 			case SET_IDLE:
 				break;
+
+			case VendorDeviceRequest: // flightstick request 0x00:
+				switch (s->type)
+				{
+					case WT_FLIGHTSTICK_FS1:
+					case WT_FLIGHTSTICK_FS2:
+						data[0] = static_cast<u8>(~(s->data.buttons & 0x0f |
+													(s->data.hat_up    ? 1u << 4 : 0) |
+													(s->data.hat_right ? 1u << 5 : 0) |
+													(s->data.hat_down  ? 1u << 6 : 0) |
+													(s->data.hat_left  ? 1u << 7 : 0)));
+
+						if (s->type == WT_FLIGHTSTICK_FS1)
+							data[0] |= static_cast<u8>(1u << 1); // button_d = 1
+
+						data[1] = static_cast<u8>(~((s->data.buttons << 1) & 0x60));
+
+						p->actual_length = 2;
+						break;
+					default:
+						goto fail;
+				}
+				break;
+
+			case VendorDeviceRequest | 0x01: // flightstick request 0x01:
+				switch (s->type)
+				{
+					case WT_FLIGHTSTICK_FS1:
+						data[0] = 0xff;
+						data[1] = 0xff;
+						p->actual_length = 2;
+						break;
+					case WT_FLIGHTSTICK_FS2:
+					{
+						data[0] = static_cast<u8>(~(0x80 | ((s->data.buttons >> 2) & 0x70)));
+						data[1] = static_cast<u8>(~(((~s->mode) & 0x3) | ((s->data.buttons >> 6) & 0xf8)));
+						p->actual_length = 2;
+					}
+						break;
+					default:
+						goto fail;
+				}
+				break;
+
+			case VendorDeviceOutRequest | 0x0C: // flightstick2 rumble
+				switch (s->type)
+				{
+					case WT_FLIGHTSTICK_FS1:
+					case WT_FLIGHTSTICK_FS2:
+						//rumble (only supported on FS2)
+						if (index == 0 && length == 1 && s->type == WT_FLIGHTSTICK_FS2)
+							InputManager::SetUSBVibrationIntensity(s->port, std::min(static_cast<float>(data[0]) * (1.0f / 255.0f), 1.0f), 0);
+						p->actual_length = length;
+						break;
+					default:
+						goto fail;
+				}
+				break;
+
 			default:
 				ret = usb_desc_handle_control(dev, p, request, value, index, length, data);
 				if (ret >= 0)
@@ -1025,6 +1306,224 @@ namespace usb_pad
 		if (usb_desc_parse_config(kbm_config_descriptor, sizeof(kbm_config_descriptor), s->desc_dev) < 0)
 			goto fail;
 
+		pad_init(s);
+
+		return &s->dev;
+
+	fail:
+		pad_handle_destroy(&s->dev);
+		return nullptr;
+	}
+
+	// ---- Flightstick (FS1, FS2, FlightForce) ----
+
+	const char* FlightStickDevice::Name() const
+	{
+		return TRANSLATE_NOOP("USB", "Flight Stick Device");
+	}
+
+	const char* FlightStickDevice::TypeName() const
+	{
+		return "FlightStick";
+	}
+
+	const char* FlightStickDevice::IconName() const
+	{
+		return ICON_PF_GAMEPAD;
+	}
+
+	std::span<const char*> FlightStickDevice::SubTypes() const
+	{
+		static const char* subtypes[] = {
+			TRANSLATE_NOOP("USB", "HP2-13 (FS1)"),
+			TRANSLATE_NOOP("USB", "HP2-217 (FS2)"),
+			TRANSLATE_NOOP("USB", "Flight Force"),
+		};
+		return subtypes;
+	}
+
+	std::span<const InputBindingInfo> FlightStickDevice::Bindings(u32 subtype) const
+	{
+		//using macros for shared data
+#define BINDINGS_FLIGHTSTICK_SHARED_ANALOG_STICK_THROTTLE_RUDDER \
+		{"StickLeft", TRANSLATE_NOOP("USB", "Stick Left"), nullptr, InputBindingInfo::Type::HalfAxis, CID_STICK_L, GenericInputBinding::LeftStickLeft}, \
+		{"StickRight", TRANSLATE_NOOP("USB", "Stick Right"), nullptr, InputBindingInfo::Type::HalfAxis, CID_STICK_R, GenericInputBinding::LeftStickRight}, \
+		{"StickUp", TRANSLATE_NOOP("USB", "Stick Up"), nullptr, InputBindingInfo::Type::HalfAxis, CID_STICK_U, GenericInputBinding::LeftStickUp}, \
+		{"StickDown", TRANSLATE_NOOP("USB", "Stick Down"), nullptr, InputBindingInfo::Type::HalfAxis, CID_STICK_D, GenericInputBinding::LeftStickDown}, \
+		{"ThrottleUp", TRANSLATE_NOOP("USB", "Throttle Up"), nullptr, InputBindingInfo::Type::HalfAxis, CID_STICK_THROTTLE_U, GenericInputBinding::R2}, \
+		{"ThrottleDown", TRANSLATE_NOOP("USB", "Throttle Down"), nullptr, InputBindingInfo::Type::HalfAxis, CID_STICK_THROTTLE_D, GenericInputBinding::L2}, \
+		{"RudderLeft", TRANSLATE_NOOP("USB", "Rudder Left"), nullptr, InputBindingInfo::Type::HalfAxis, CID_STICK_RUDDER_L, GenericInputBinding::L1}, \
+		{ "RudderRight", TRANSLATE_NOOP("USB", "Rudder Right"), nullptr, InputBindingInfo::Type::HalfAxis, CID_STICK_RUDDER_R, GenericInputBinding::R1 }
+
+#define BINDINGS_FLIGHTSTICK_SHARED_ANALOG_HAT_BUTTONS \
+		{"HatLeft", TRANSLATE_NOOP("USB", "Stick Hat Left"), nullptr, InputBindingInfo::Type::HalfAxis, CID_STICK_HAT_L, GenericInputBinding::RightStickLeft}, \
+		{"HatRight", TRANSLATE_NOOP("USB", "Stick Hat Right"), nullptr, InputBindingInfo::Type::HalfAxis, CID_STICK_HAT_R, GenericInputBinding::RightStickRight}, \
+		{"HatkUp", TRANSLATE_NOOP("USB", "Stick Hat Up"), nullptr, InputBindingInfo::Type::HalfAxis, CID_STICK_HAT_U, GenericInputBinding::RightStickUp}, \
+		{"HatDown", TRANSLATE_NOOP("USB", "Stick Hat Down"), nullptr, InputBindingInfo::Type::HalfAxis, CID_STICK_HAT_D, GenericInputBinding::RightStickDown}, \
+		{"TriangleA", TRANSLATE_NOOP("USB", "Triangle (A)"), nullptr, InputBindingInfo::Type::HalfAxis, CID_BRAKE, GenericInputBinding::Triangle}, \
+		{"SquareB", TRANSLATE_NOOP("USB", "Square (B)"), nullptr, InputBindingInfo::Type::HalfAxis, CID_THROTTLE, GenericInputBinding::Square}
+
+#define BINDINGS_FLIGHTSTICK_SHARED_DPAD \
+		{"DPadUp", TRANSLATE_NOOP("USB", "D-Pad Up"), nullptr, InputBindingInfo::Type::Button, CID_DPAD_UP, GenericInputBinding::DPadUp}, \
+		{"DPadDown", TRANSLATE_NOOP("USB", "D-Pad Down"), nullptr, InputBindingInfo::Type::Button, CID_DPAD_DOWN, GenericInputBinding::DPadDown}, \
+		{"DPadLeft", TRANSLATE_NOOP("USB", "D-Pad Left"), nullptr, InputBindingInfo::Type::Button, CID_DPAD_LEFT, GenericInputBinding::DPadLeft}, \
+		{"DPadRight", TRANSLATE_NOOP("USB", "D-Pad Right"), nullptr, InputBindingInfo::Type::Button, CID_DPAD_RIGHT, GenericInputBinding::DPadRight }
+
+#define BINDINGS_FLIGHTSTICK_SHARED_BUTTONS \
+		{"CrossTrigger", TRANSLATE_NOOP("USB", "Cross (Trigger)"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON5, GenericInputBinding::Cross}, \
+		{"CircleLaunch", TRANSLATE_NOOP("USB", "Circle (Launch)"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON4, GenericInputBinding::Circle}, \
+		{"Select", TRANSLATE_NOOP("USB", "Select (Fire C)"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON0, GenericInputBinding::Select}, \
+		{"Start", TRANSLATE_NOOP("USB", "Start"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON3, GenericInputBinding::Start}, \
+		{"HatClick", TRANSLATE_NOOP("USB", "Hat Click"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON2, GenericInputBinding::R3}
+
+		const PS2WheelTypes flightstick_subtype = static_cast<PS2WheelTypes>(WT_FLIGHTSTICK_FS1 + subtype);
+
+		switch (flightstick_subtype)
+		{
+			case WT_FLIGHTSTICK_FS1:
+			{
+				static constexpr const InputBindingInfo bindings_fs1[] = {
+					BINDINGS_FLIGHTSTICK_SHARED_ANALOG_STICK_THROTTLE_RUDDER,
+					BINDINGS_FLIGHTSTICK_SHARED_ANALOG_HAT_BUTTONS,
+					BINDINGS_FLIGHTSTICK_SHARED_DPAD,
+					BINDINGS_FLIGHTSTICK_SHARED_BUTTONS
+				};
+				return bindings_fs1;
+			}
+			case WT_FLIGHTSTICK_FS2:
+			{
+				static constexpr const InputBindingInfo bindings_fs2[] = {
+					BINDINGS_FLIGHTSTICK_SHARED_ANALOG_STICK_THROTTLE_RUDDER,
+					BINDINGS_FLIGHTSTICK_SHARED_ANALOG_HAT_BUTTONS,
+					BINDINGS_FLIGHTSTICK_SHARED_DPAD,
+					{"Dpad2Up", TRANSLATE_NOOP("USB", "D-Pad 2 Up"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON10, GenericInputBinding::Unknown},
+					{"Dpad2Down", TRANSLATE_NOOP("USB", "D-Pad 2 Down"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON12, GenericInputBinding::Unknown},
+					{"Dpad2Left", TRANSLATE_NOOP("USB", "D-Pad 2 Left"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON13, GenericInputBinding::Unknown},
+					{"Dpad2Right", TRANSLATE_NOOP("USB", "D-Pad 2 Right"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON11, GenericInputBinding::Unknown},
+					BINDINGS_FLIGHTSTICK_SHARED_BUTTONS,
+					{"D", TRANSLATE_NOOP("USB", "D"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON1, GenericInputBinding::L3},
+					{"SW1", TRANSLATE_NOOP("USB", "SW1 (Pinky Trigger)"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON9, GenericInputBinding::Unknown},
+					{"Dpad3Left", TRANSLATE_NOOP("USB", "D-Pad 3 Left"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON8, GenericInputBinding::Unknown},
+					{"Dpad3Middle", TRANSLATE_NOOP("USB", "D-Pad 3 Middle"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON7, GenericInputBinding::Unknown},
+					{"Dpad3Right", TRANSLATE_NOOP("USB", "D-Pad 3 Right"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON6, GenericInputBinding::Unknown},
+					{"Motor", TRANSLATE_NOOP("USB", "Motor"), nullptr, InputBindingInfo::Type::Motor, 0, GenericInputBinding::LargeMotor},
+				};
+				return bindings_fs2;
+			}
+			case WT_FLIGHTSTICK_FLIGHTFORCE:
+			{
+				static constexpr const InputBindingInfo bindings_ff[] = {
+					BINDINGS_FLIGHTSTICK_SHARED_ANALOG_STICK_THROTTLE_RUDDER,
+					BINDINGS_FLIGHTSTICK_SHARED_DPAD,
+					{"B1", TRANSLATE_NOOP("USB", "B1 (Trigger)"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON0, GenericInputBinding::Cross},
+					{"B2", TRANSLATE_NOOP("USB", "B2"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON1, GenericInputBinding::Square},
+					{"B3", TRANSLATE_NOOP("USB", "B2"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON2, GenericInputBinding::Circle},
+					{"B4", TRANSLATE_NOOP("USB", "B4"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON3, GenericInputBinding::Triangle},
+					{"B5", TRANSLATE_NOOP("USB", "B5"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON4, GenericInputBinding::R3},
+					{"B6", TRANSLATE_NOOP("USB", "B6"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON5, GenericInputBinding::Start},
+					{"B7", TRANSLATE_NOOP("USB", "B7"), nullptr, InputBindingInfo::Type::Button, CID_BUTTON6, GenericInputBinding::Select},
+					{"FFDevice", TRANSLATE_NOOP("USB", "Force Feedback"), nullptr, InputBindingInfo::Type::Device, 0, GenericInputBinding::Unknown},
+				};
+				return bindings_ff;
+			}
+			default:
+				break;
+		}
+		return {};
+#undef BINDINGS_FLIGHTSTICK_SHARED_ANALOG_STICK_THROTTLE_RUDDER
+#undef BINDINGS_FLIGHTSTICK_SHARED_ANALOG_HAT_BUTTONS
+#undef BINDINGS_FLIGHTSTICK_SHARED_DPAD
+#undef BINDINGS_FLIGHTSTICK_SHARED_BUTTONS
+	}
+
+	void FlightStickDevice::UpdateSettings(USBDevice* dev, SettingsInterface& si) const
+	{
+		//FlightStickDeviceState* s = USB_CONTAINER_OF(dev, FlightStickDeviceState, dev);
+		PadState* s = USB_CONTAINER_OF(dev, PadState, dev);
+		s->mode = USB::GetConfigInt(si, s->port, TypeName(), "Mode", 3);
+		if (s->type == WT_FLIGHTSTICK_FS2)
+		{
+			Host::AddKeyedOSDMessage("Pad", fmt::format("FlightStick Mode: {}", s->mode), Host::OSD_QUICK_DURATION);
+		}
+	}
+
+	std::span<const SettingInfo> FlightStickDevice::Settings(u32 subtype) const
+	{
+		const PS2WheelTypes flightstick_subtype = static_cast<PS2WheelTypes>(WT_FLIGHTSTICK_FS1 + subtype);
+
+		static const char* s_mode_options[] = {
+			TRANSLATE_NOOP("Pad", "1"),
+			TRANSLATE_NOOP("Pad", "2"),
+			TRANSLATE_NOOP("Pad", "3"),
+			nullptr
+		};
+
+		static constexpr const SettingInfo mode = {
+			SettingInfo::Type::IntegerList, // type
+			"Mode", // name
+			TRANSLATE_NOOP("Pad", "Mode switch"), // display name
+			TRANSLATE_NOOP("Pad", "Set the stick mode switch position"), // description
+			"3", // default value
+			"1", // min value
+			"3", // max value
+			nullptr, // step value
+			nullptr, // format
+			s_mode_options, // options for integer lists
+			nullptr, // options for string lists
+			0.0f // multiplier
+		};
+
+		static constexpr const SettingInfo info[] = {mode};
+
+		if (flightstick_subtype == WT_FLIGHTSTICK_FS2)
+			return info;
+		else
+			return {};
+	}
+
+	USBDevice* FlightStickDevice::CreateDevice(SettingsInterface& si, u32 port, u32 subtype) const
+	{
+		const PS2WheelTypes flightstick_subtype = static_cast<PS2WheelTypes>(WT_FLIGHTSTICK_FS1 + subtype);
+		PadState* s = new PadState(port, flightstick_subtype);
+
+		s->desc.full = &s->desc_dev;
+		s->desc.str = flightforce_desc_strings;
+
+		const uint8_t* dev_desc = flightforce_dev_descriptor;
+		int dev_desc_len = sizeof(flightforce_dev_descriptor);
+		const uint8_t* config_desc = flightforce_config_descriptor;
+		int config_desc_len = sizeof(flightforce_config_descriptor);
+
+		switch (s->type)
+		{
+			case WT_FLIGHTSTICK_FS1:
+			{
+				dev_desc = fst01_dev_descriptor;
+				dev_desc_len = sizeof(fst01_dev_descriptor);
+				config_desc = flightstick_config_descriptor;
+				config_desc_len = sizeof(flightstick_config_descriptor);
+				s->desc.str = flightstick_desc_strings;
+			}
+			break;
+			case WT_FLIGHTSTICK_FS2:
+			{
+				dev_desc = fst02_dev_descriptor;
+				dev_desc_len = sizeof(fst02_dev_descriptor);
+				config_desc = flightstick_config_descriptor;
+				config_desc_len = sizeof(flightstick_config_descriptor);
+				s->desc.str = flightstick_desc_strings;
+			}
+			break;
+			default:
+				break;
+		}
+
+		if (usb_desc_parse_dev(dev_desc, dev_desc_len, s->desc, s->desc_dev) < 0)
+			goto fail;
+		if (usb_desc_parse_config(config_desc, config_desc_len, s->desc_dev) < 0)
+			goto fail;
+
+		s->UpdateSettings(si, TypeName());
 		pad_init(s);
 
 		return &s->dev;
